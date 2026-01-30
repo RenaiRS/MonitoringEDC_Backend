@@ -19,8 +19,13 @@ func Login(c *fiber.Ctx) error {
 
 	if req.Username == "admin" && req.Password == "admin123" {
 		return c.JSON(fiber.Map{
-			"message": "Login success",
-			"token":   "dummy-token",
+		"status": "success",
+		"data": fiber.Map{
+			"token": "dummy-token",
+			"user": fiber.Map{
+			"username": req.Username,
+			},
+		},
 		})
 	}
 
