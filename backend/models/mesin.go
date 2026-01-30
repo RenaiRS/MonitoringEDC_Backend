@@ -7,7 +7,6 @@ type MesinEDC struct {
 	TerminalID   string    `gorm:"unique;not null"`
 	MID          string
 
-	SN           string
 	NamaNasabah  string
 	Kota         string
 	Cabang       string
@@ -19,12 +18,12 @@ type MesinEDC struct {
 	StatusData   string    // bank | vendor_only
 	LetakMesin   string    // nasabah | bank | vendor
 
-	TanggalPasang time.Time
+	TanggalPasang *time.Time `gorm:"column:tanggal_pasang"`
 
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 
 	// RELATION (POINTER)
-	Sewa      *Sewa        `gorm:"foreignKey:MesinID"`
+	Sewas []Sewa `gorm:"foreignKey:MesinID"`
 	Perbaikan []Perbaikan  `gorm:"foreignKey:MesinID"`
 }
