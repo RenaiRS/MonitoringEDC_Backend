@@ -4,8 +4,8 @@ import "github.com/gofiber/fiber/v2"
 
 func Success(c *fiber.Ctx, data interface{}) error {
 	return c.JSON(fiber.Map{
-		"status":  "success",
-		"data":    data,
+		"status": "success",
+		"data":   data,
 	})
 }
 
