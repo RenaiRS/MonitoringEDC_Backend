@@ -4,40 +4,55 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"backend/database"
 	"backend/models"
+	"backend/utils"
+	"backend/models/dto"
 )
 
 func GetSewaSummary(c *fiber.Ctx) error {
 	db := database.DB
 
-	var sewas []models.Sewa
-	db.Preload("Mesin").Find(&sewas)
+	var mesins []models.MesinEDC
+	err := db.Find(&mesins).Error
+	if err != nil {
+		return utils.Error(c, "Gagal mengambil summary sewa")
+	}
+
+	var sewasAktif []models.Sewa
+	err = db.Where("status_sewa = ?", "aktif").
+		Order("created_at DESC").
+		Find(&sewasAktif).Error
+	if err != nil {
+		return utils.Error(c, "Gagal mengambil data sewa aktif")
+	}
+
+	sewaMap := make(map[uint]*models.Sewa)
+	for i := range sewasAktif {
+		mesinID := sewasAktif[i].MesinID
+		if _, exists := sewaMap[mesinID]; !exists {
+			sewaMap[mesinID] = &sewasAktif[i]
+		}
+	}
 
 	sewaAktif := 0
 	sewaBerakhir := 0
 	bermasalah := 0
 	totalBiaya := 0
 
-	for _, s := range sewas {
-		biaya := s.BiayaBulanan
-		if biaya == 0 {
-			biaya = 1500000
-		}
-
-		if s.StatusSewa == "aktif" {
+	for _, m := range mesins {
+		if sewa, exists := sewaMap[m.ID]; exists {
+			// Mesin ini punya sewa aktif
 			sewaAktif++
-			totalBiaya += biaya
-		} else if s.StatusSewa == "berakhir" {
-			sewaBerakhir++
-		}
+			totalBiaya += utils.NormalizeBiayaBulanan(sewa.BiayaBulanan)
 
-		if s.Mesin != nil {
-			if s.Mesin.StatusMesin == "perbaikan" || s.Mesin.StatusMesin == "rusak" {
+			if utils.IsMesinBermasalah(m.StatusMesin) {
 				bermasalah++
 			}
+		} else {
+			sewaBerakhir++
 		}
 	}
 
-	return c.JSON(fiber.Map{
+	return utils.Success(c, fiber.Map{
 		"sewa_aktif":          sewaAktif,
 		"sewa_berakhir":       sewaBerakhir,
 		"total_biaya_bulanan": totalBiaya,
@@ -48,38 +63,62 @@ func GetSewaSummary(c *fiber.Ctx) error {
 func GetSewaList(c *fiber.Ctx) error {
 	db := database.DB
 
-	var sewas []models.Sewa
-	err := db.Preload("Mesin").Find(&sewas).Error
+	var mesins []models.MesinEDC
+	err := db.Find(&mesins).Error
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"message": "Gagal mengambil data sewa",
-		})
+		return utils.Error(c, "Gagal mengambil data sewa")
 	}
 
-	var result []fiber.Map
-
-	for _, s := range sewas {
-		if s.Mesin == nil {
-			continue
-		}
-
-		biaya := s.BiayaBulanan
-		if biaya == 0 {
-			biaya = 1500000
-		}
-
-		result = append(result, fiber.Map{
-			"terminal_id":     s.Mesin.TerminalID,
-			"nama_nasabah":    s.Mesin.NamaNasabah,
-			"tanggal_pasang":  s.Mesin.TanggalPasang,
-			"status_mesin":    s.Mesin.StatusMesin,
-			"letak_mesin":     s.Mesin.LetakMesin,
-			"status_sewa":     s.StatusSewa,
-			"biaya_bulanan":   biaya,
-		})
+	var sewasAktif []models.Sewa
+	err = db.Where("status_sewa = ?", "aktif").
+		Order("created_at DESC").
+		Find(&sewasAktif).Error
+	if err != nil {
+		return utils.Error(c, "Gagal mengambil data sewa aktif")
 	}
 
-	return c.JSON(result)
+	sewaMap := make(map[uint]*models.Sewa)
+	for i := range sewasAktif {
+		mesinID := sewasAktif[i].MesinID
+		if _, exists := sewaMap[mesinID]; !exists {
+			sewaMap[mesinID] = &sewasAktif[i]
+		}
+	}
+
+	var result []dto.MachineResponse
+
+	for _, m := range mesins {
+		statusSewa := "BERAKHIR"
+		biaya := 0
+
+		if sewa, exists := sewaMap[m.ID]; exists {
+			statusSewa = utils.MapStatusSewaToDTO(sewa.StatusSewa)
+			biaya = utils.NormalizeBiayaBulanan(sewa.BiayaBulanan)
+		}
+
+		resp := dto.MachineResponse{
+			ID:          m.ID,
+			TerminalID:  m.TerminalID,
+			MID:         m.MID,
+			NamaNasabah: utils.GetNamaNasabah(m.NamaNasabah, m.StatusData),
+			Kota:        m.Kota,
+			Cabang:      m.Cabang,
+			TipeEDC:     m.TipeEDC,
+			StatusMesin: dto.MapStatusMesin(m.StatusMesin),
+			StatusData:  dto.MapStatusData(m.StatusData),
+			StatusSewa:  statusSewa,
+			StatusLetak: dto.MapStatusLetak(m.LetakMesin),
+			BiayaSewa:   biaya,
+		}
+
+		if tp := dto.FormatDateOnlyPtr(m.TanggalPasang); tp != "" {
+			resp.TanggalPasang = tp
+		}
+
+		result = append(result, resp)
+	}
+
+	return utils.Success(c, result)
 }
 
 func SearchSewa(c *fiber.Ctx) error {
@@ -96,34 +135,41 @@ func SearchSewa(c *fiber.Ctx) error {
 		Find(&sewas).Error
 
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{
-			"message": "Gagal melakukan pencarian sewa",
-		})
+		return utils.Error(c, "Gagal melakukan pencarian sewa")
 	}
 
-	var result []fiber.Map
+	var result []dto.MachineResponse
 
 	for _, s := range sewas {
 		if s.Mesin == nil {
 			continue
 		}
 
-		biaya := s.BiayaBulanan
-		if biaya == 0 {
-			biaya = 1500000
+		m := s.Mesin
+		biaya := utils.NormalizeBiayaBulanan(s.BiayaBulanan)
+
+		machineResp := dto.MachineResponse{
+			ID:          m.ID,
+			TerminalID:  m.TerminalID,
+			MID:         m.MID,
+			NamaNasabah: utils.GetNamaNasabah(m.NamaNasabah, m.StatusData),
+			Kota:        m.Kota,
+			Cabang:      m.Cabang,
+			TipeEDC:     m.TipeEDC,
+			StatusMesin: dto.MapStatusMesin(m.StatusMesin),
+			StatusData:  dto.MapStatusData(m.StatusData),
+			StatusSewa:  utils.MapStatusSewaToDTO(s.StatusSewa),
+			StatusLetak: dto.MapStatusLetak(m.LetakMesin),
+			BiayaSewa:   biaya,
 		}
 
-		result = append(result, fiber.Map{
-			"terminal_id":     s.Mesin.TerminalID,
-			"nama_nasabah":    s.Mesin.NamaNasabah,
-			"tanggal_pasang":  s.Mesin.TanggalPasang,
-			"status_mesin":    s.Mesin.StatusMesin,
-			"letak_mesin":     s.Mesin.LetakMesin,
-			"status_sewa":     s.StatusSewa,
-			"biaya_bulanan":   biaya,
-		})
+		tp := dto.FormatDateOnlyPtr(m.TanggalPasang)
+		if tp != "" {
+			machineResp.TanggalPasang = tp
+		}
+
+		result = append(result, machineResp)
 	}
 
-	return c.JSON(result)
+	return utils.Success(c, result)
 }
-
