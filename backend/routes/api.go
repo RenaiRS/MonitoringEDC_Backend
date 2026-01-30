@@ -14,4 +14,6 @@ func SetupRoutes(app *fiber.App) {
 	OverdueRoutes(api)
 	RekapRoutes(api)
 	sewaRoutes(api)
+	DetailMesinRoutes(api)
+	ExcelRoutes(api)
 }
