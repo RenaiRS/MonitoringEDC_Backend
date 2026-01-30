@@ -35,7 +35,6 @@ func DBMigrate() {
 		&models.MesinEDC{},
 		&models.Sewa{},
 		&models.Perbaikan{},
-		&models.Overdue{},
 	); err != nil {
 		log.Fatal("❌ Failed to migrate:", err)
 	}
